@@ -194,6 +194,115 @@ public class FileSystemManager {
         }
     }
 
+    private long getDiskBlockOffset(int blockIndex) {
+        // Calculates the byte offset on the disk where a specific block starts.
+        // Block 0 is reserved for metadata, so data blocks (index >= 1) follow it.
+        return (long) blockIndex * BLOCK_SIZE;
+    }
+
+    public byte[] read(String filename, int length, int offset) throws Exception {
+        
+        globalLock.lock();
+        try {
+            // 1. Find the FEntry
+            FEntry fileEntry = null;
+            for (FEntry entry : fentryTable) {
+                if (entry != null && entry.getFilename().equals(filename)) {
+                    fileEntry = entry;
+                    break;
+                }
+            }
+            if (fileEntry == null) {
+                throw new Exception("ERROR: file does not exist");
+            }
+            
+            // 2. Validate parameters against file size
+            if (offset < 0 || offset > fileEntry.getFilesize()) {
+                throw new Exception("ERROR: Invalid offset");
+            }
+            // Actual bytes to read should be limited by file size
+            int actualReadLength = Math.min(length, fileEntry.getFilesize() - offset);
+            
+            if (actualReadLength <= 0) {
+                return new byte[0]; // Nothing to read
+            }
+            
+            byte[] resultBuffer = new byte[actualReadLength];
+            int currentReadOffset = 0; // Tracks position in the resultBuffer
+            
+            // 3. Find the starting block and position
+            int blocksToSkip = offset / BLOCK_SIZE;
+            int startBlockOffset = offset % BLOCK_SIZE; // Byte offset within the first block to read from
+            int currentFNodeIndex = fileEntry.getFirstBlock();
+
+            // Check for empty file: An empty file's FNode.blockIndex is -1.
+            if (fnodeTable[currentFNodeIndex].getBlockIndex() < 0 && blocksToSkip == 0) {
+                 return new byte[0]; 
+            }
+            
+            // 4. Traverse FNodes to reach the starting block
+            for (int i = 0; i < blocksToSkip; i++) {
+                if (currentFNodeIndex == -1) {
+                    throw new Exception("ERROR: File is shorter than reported filesize/offset"); 
+                }
+                currentFNodeIndex = fnodeTable[currentFNodeIndex].getNext();
+            }
+
+            // 5. Read block by block
+            int bytesRemainingToRead = actualReadLength;
+            
+            while (bytesRemainingToRead > 0 && currentFNodeIndex != -1) {
+                FNode currentFNode = fnodeTable[currentFNodeIndex];
+                int dataBlockIndex = currentFNode.getBlockIndex();
+                
+                if (dataBlockIndex < FIRST_DATA_BLOCK_INDEX) {
+                    throw new Exception("ERROR: FNode chain corruption detected while reading"); 
+                }
+                
+                // Calculate size for this specific read operation
+                int bytesInCurrentBlock = BLOCK_SIZE - startBlockOffset;
+                int readSize = Math.min(bytesRemainingToRead, bytesInCurrentBlock);
+                
+                // --- DISK I/O LOGIC (Placeholder: You must implement actual disk.read/seek) ---
+                
+                byte[] blockData = new byte[readSize]; // Buffer to hold data read from disk
+                
+                // // TODO: Implement actual disk I/O using RandomAccessFile 'disk'
+                // disk.seek(getDiskBlockOffset(dataBlockIndex) + startBlockOffset);
+                // disk.read(blockData, 0, readSize);
+                
+                // Simulate I/O for now:
+                // Note: The 'blockData' array will contain zeros until disk I/O is implemented.
+                System.out.println("DEBUG: Attempting to read " + readSize + " bytes from block " + dataBlockIndex);
+                
+                // Copy the read data (currently zeros) into the final result buffer
+                System.arraycopy(blockData, 0, resultBuffer, currentReadOffset, readSize);
+                
+                // --- END DISK I/O ---
+                
+                // Update tracking variables
+                bytesRemainingToRead -= readSize;
+                currentReadOffset += readSize;
+                startBlockOffset = 0; // After the first block, subsequent blocks read start from offset 0
+                
+                // Move to the next FNode
+                currentFNodeIndex = currentFNode.getNext();
+            }
+            
+            // If the loop finished without reading all requested bytes (e.g., end of file reached early)
+            if (currentReadOffset < actualReadLength) {
+                byte[] partialResult = new byte[currentReadOffset];
+                System.arraycopy(resultBuffer, 0, partialResult, 0, currentReadOffset);
+                return partialResult;
+            }
+            
+            return resultBuffer;
+
+        } finally {
+            globalLock.unlock();
+        }
+    }
+
 
     // TODO: Add readFile, writeFile, deleteFile, listFiles and other required methods,
 }
