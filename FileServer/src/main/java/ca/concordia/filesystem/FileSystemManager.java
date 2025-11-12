@@ -303,6 +303,151 @@ public class FileSystemManager {
         }
     }
 
+    private int findFreeDataBlock() {
+        // Find the first UNUSED data block (index >= 1)
+        for (int i = FIRST_DATA_BLOCK_INDEX; i < MAXBLOCKS; i++) {
+            if (!freeBlockList[i]) {
+                freeBlockList[i] = true; // Mark as USED immediately upon finding
+                return i;
+            }
+        }
+        return -1; // No free blocks
+    }
+
+    private int findFreeFNode() {
+        // Find the first UNUSED FNode (blockIndex < 0)
+        for (int i = 0; i < fnodeTable.length; i++) {
+            if (fnodeTable[i].getBlockIndex() < 0) {
+                return i;
+            }
+        }
+        return -1; // No free FNodes
+    }
+
+    public void write(String filename, byte[] data, int offset) throws Exception {
+        
+        if (data.length == 0) return; // Nothing to write
+
+        globalLock.lock();
+        try {
+            // 1. Find the FEntry
+            FEntry fileEntry = null;
+            for (FEntry entry : fentryTable) {
+                if (entry != null && entry.getFilename().equals(filename)) {
+                    fileEntry = entry;
+                    break;
+                }
+            }
+            if (fileEntry == null) {
+                throw new Exception("ERROR: file does not exist");
+            }
+            
+            // 2. Validate parameters: Offset must be <= current filesize (no sparse files)
+            if (offset < 0 || offset > fileEntry.getFilesize()) {
+                throw new Exception("ERROR: Invalid offset for writing (offset must be <= filesize)");
+            }
+
+            // 3. Find the starting FNode and position
+            int bytesToWrite = data.length;
+            int blocksToSkip = offset / BLOCK_SIZE;
+            int startBlockOffset = offset % BLOCK_SIZE;
+            int currentFNodeIndex = fileEntry.getFirstBlock();
+            
+            // Traverse to the correct starting FNode.
+            for (int i = 0; i < blocksToSkip; i++) {
+                if (currentFNodeIndex == -1) {
+                    throw new Exception("ERROR: File corruption during write offset calculation.");
+                }
+                currentFNodeIndex = fnodeTable[currentFNodeIndex].getNext();
+            }
+
+            // 4. Handle initial empty file state (if writing to offset 0 of an empty file)
+            // The FNode needs its blockIndex set from -1 to an allocated data block.
+            if (fileEntry.getFilesize() == 0 && offset == 0) {
+                int dataBlockIndex = findFreeDataBlock();
+                if (dataBlockIndex == -1) {
+                    throw new Exception("ERROR: Not enough disk space to allocate first block.");
+                }
+                // Update the FNode already allocated for the empty file
+                fnodeTable[currentFNodeIndex].setBlockIndex(dataBlockIndex); 
+            }
+
+            int dataBufferIndex = 0; // Tracks position in the input 'data' byte array
+            int lastFNodeIndex = (blocksToSkip > 0) ? currentFNodeIndex : -1; // Keep track of the node *before* the current one if we traversed
+
+            // 5. Write block by block
+            while (bytesToWrite > 0) {
+                
+                // A. Handle File Extension / Allocation
+                if (currentFNodeIndex == -1) {
+                    // File needs to be extended: allocate new FNode and Data Block
+                    int newFNodeIndex = findFreeFNode();
+                    int newDataBlockIndex = findFreeDataBlock(); // This call also marks the block as used
+
+                    if (newFNodeIndex == -1 || newDataBlockIndex == -1) {
+                        // Crucial: Handle failure *before* any disk writes (though we don't have disk writes yet)
+                        throw new Exception("ERROR: Not enough resources (FNode or Data Block) to extend file.");
+                    }
+
+                    // Link the previous FNode to the new FNode
+                    if (lastFNodeIndex != -1) {
+                        fnodeTable[lastFNodeIndex].setNext(newFNodeIndex);
+                    } 
+                    
+                    // Initialize the new FNode
+                    fnodeTable[newFNodeIndex].setBlockIndex(newDataBlockIndex);
+                    fnodeTable[newFNodeIndex].setNext(-1); // Mark as the new end of the chain
+                    
+                    currentFNodeIndex = newFNodeIndex;
+                    startBlockOffset = 0; // New blocks always start writing from offset 0
+                }
+                
+                // Get the current FNode and its data block
+                FNode currentFNode = fnodeTable[currentFNodeIndex];
+                int dataBlockIndex = currentFNode.getBlockIndex();
+                
+                // B. Calculate Write Size
+                int bytesInCurrentBlock = BLOCK_SIZE - startBlockOffset;
+                int writeSize = Math.min(bytesToWrite, bytesInCurrentBlock);
+                
+                // C. DISK I/O LOGIC (Placeholder: You must implement actual disk.write/seek)
+                
+                byte[] writeData = new byte[writeSize];
+                System.arraycopy(data, dataBufferIndex, writeData, 0, writeSize);
+                
+                // // TODO: Implement actual disk I/O using RandomAccessFile 'disk'
+                // disk.seek(getDiskBlockOffset(dataBlockIndex) + startBlockOffset);
+                // disk.write(writeData, 0, writeSize);
+                
+                // Simulate I/O for now:
+                System.out.println("DEBUG: Writing " + writeSize + " bytes to block " + dataBlockIndex + " (Disk I/O placeholder).");
+                
+                // --- END DISK I/O ---
+                
+                // D. Update Tracking and Move
+                
+                bytesToWrite -= writeSize;
+                dataBufferIndex += writeSize;
+                lastFNodeIndex = currentFNodeIndex;
+                startBlockOffset = 0; // Reset offset for subsequent blocks
+                currentFNodeIndex = currentFNode.getNext();
+            }
+
+            // 6. Update Metadata (filesize and persist)
+            int newFilesize = offset + data.length;
+            if (newFilesize > fileEntry.getFilesize()) {
+                fileEntry.setFilesize((short) newFilesize);
+            }
+            
+            // TODO: Call private method to persist fentryTable, fnodeTable, and freeBlockList to 'disk'
+            
+            System.out.println("SUCCESS: Wrote " + data.length + " bytes to file '" + filename + "'. New size: " + fileEntry.getFilesize() + " bytes.");
+
+        } finally {
+            globalLock.unlock();
+        }
+    }
+
 
     // TODO: Add readFile, writeFile, deleteFile, listFiles and other required methods,
 }
