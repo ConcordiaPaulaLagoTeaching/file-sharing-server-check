@@ -1,5 +1,5 @@
 // In ca/concordia/coen346/filesystem/datastructures/FNode.java
-
+package ca.concordia.filesystem.datastructures;
 public class FNode {
     
     // The index of the data block storing the file data. Negative if not in use. (2 bytes)

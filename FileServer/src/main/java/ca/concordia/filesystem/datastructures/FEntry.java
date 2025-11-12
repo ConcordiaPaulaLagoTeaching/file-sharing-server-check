@@ -1,5 +1,4 @@
 package ca.concordia.filesystem.datastructures;
-
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.StandardCharsets;
 
