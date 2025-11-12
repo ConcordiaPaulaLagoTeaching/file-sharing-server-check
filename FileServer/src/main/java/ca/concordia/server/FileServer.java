@@ -1,9 +1,6 @@
 package ca.concordia.server;
 import ca.concordia.filesystem.FileSystemManager;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -11,60 +8,45 @@ public class FileServer {
 
     private FileSystemManager fsManager;
     private int port;
+    
     public FileServer(int port, String fileSystemName, int totalSize){
-        // Initialize the FileSystemManager
-        FileSystemManager fsManager = new FileSystemManager(fileSystemName,
-                10*128 );
-        this.fsManager = fsManager;
-        this.port = port;
-    }
-
-    public void start(){
-        try (ServerSocket serverSocket = new ServerSocket(12345)) {
-            System.out.println("Server started. Listening on port 12345...");
-
-            while (true) {
-                Socket clientSocket = serverSocket.accept();
-                System.out.println("Handling client: " + clientSocket);
-                try (
-                        BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-                        PrintWriter writer = new PrintWriter(clientSocket.getOutputStream(), true)
-                ) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        System.out.println("Received from client: " + line);
-                        String[] parts = line.split(" ");
-                        String command = parts[0].toUpperCase();
-
-                        switch (command) {
-                            case "CREATE":
-                                fsManager.createFile(parts[1]);
-                                writer.println("SUCCESS: File '" + parts[1] + "' created.");
-                                writer.flush();
-                                break;
-                            //TODO: Implement other commands READ, WRITE, DELETE, LIST
-                            case "QUIT":
-                                writer.println("SUCCESS: Disconnecting.");
-                                return;
-                            default:
-                                writer.println("ERROR: Unknown command.");
-                                break;
-                        }
-                    }
-                } catch (Exception e) {
-                    e.printStackTrace();
-                } finally {
-                    try {
-                        clientSocket.close();
-                    } catch (Exception e) {
-                        // Ignore
-                    }
-                }
-            }
+        try {
+            // FIX 1: Correctly initialize FSM using the provided totalSize argument
+            this.fsManager = new FileSystemManager(fileSystemName, totalSize); 
+            this.port = port;
         } catch (Exception e) {
-            e.printStackTrace();
-            System.err.println("Could not start server on port " + port);
+             System.err.println("FATAL: Failed to init FSM: " + e.getMessage());
+             this.fsManager = null;
+             this.port = port;
         }
     }
 
+    public void start(){
+        if (fsManager == null) {
+             System.err.println("Server cannot start. FSM initialization failed.");
+             return;
+        }
+        
+        // FIX 2: Use the instance's 'port' variable instead of hardcoding 12345
+        try (ServerSocket serverSocket = new ServerSocket(this.port)) { 
+            System.out.println("Server started. Listening on port " + this.port + "...");
+
+            while (true) {
+                // Wait for a client connection
+                Socket clientSocket = serverSocket.accept();
+                System.out.println("Handling new client: " + clientSocket.getInetAddress().getHostAddress());
+                
+                // CRITICAL CHANGE: Implement Multithreading
+                // Delegate the entire client session to a new ClientHandler thread.
+                Thread.ofPlatform().start(new ClientHandler(clientSocket, fsManager));
+                
+                
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.err.println("Could not start server on port " + this.port);
+        }
+    }
+    
+    
 }
