@@ -7,6 +7,8 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.Arrays;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.ArrayList;
+import java.util.List;
 
 public class FileSystemManager {
 
@@ -406,6 +408,29 @@ public class FileSystemManager {
             globalLock.unlock();
         }
     }
+
+    public List<String> listFiles() throws Exception {
+    globalLock.lock();
+    try {
+        List<String> fileNames = new ArrayList<>();
+        
+        // Iterate through all possible file entries (MAXFILES)
+        for (int i = 0; i < MAXFILES; i++) {
+            FEntry entry = readFEntry(i);
+            String fileName = entry.getFilename();
+            
+            // A file is considered "used" if its filename is not empty
+            if (!fileName.isEmpty()) {
+                fileNames.add(fileName + " (" + entry.getFilesize() + " bytes)");
+            }
+        }
+        
+        return fileNames;
+
+    } finally {
+        globalLock.unlock();
+    }
+}
 
         public byte[] readFile(String fileName) throws Exception {
         globalLock.lock();
