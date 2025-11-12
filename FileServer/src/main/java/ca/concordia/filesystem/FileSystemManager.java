@@ -166,6 +166,34 @@ public class FileSystemManager {
         }
     }
 
+    public String[] listFiles() {
+        globalLock.lock();
+        try {
+            // Count how many files are currently active
+            int count = 0;
+            for (FEntry entry : fentryTable) {
+                if (entry != null) {
+                    count++;
+                }
+            }
+            
+            String[] fileNames = new String[count];
+            int index = 0;
+            
+            // Populate the array with the filenames
+            for (FEntry entry : fentryTable) {
+                if (entry != null) {
+                    fileNames[index++] = entry.getFilename();
+                }
+            }
+            
+            return fileNames;
+
+        } finally {
+            globalLock.unlock();
+        }
+    }
+
 
     // TODO: Add readFile, writeFile, deleteFile, listFiles and other required methods,
 }
