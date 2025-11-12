@@ -406,6 +406,73 @@ public class FileSystemManager {
             globalLock.unlock();
         }
     }
+
+        public byte[] readFile(String fileName) throws Exception {
+        globalLock.lock();
+        try {
+            // 1. Find File Entry
+            FEntry fileEntry = null;
+            for (int i = 0; i < MAXFILES; i++) {
+                FEntry entry = readFEntry(i);
+                if (entry.getFilename().equals(fileName)) {
+                    fileEntry = entry;
+                    break;
+                }
+            }
+            if (fileEntry == null) {
+                throw new Exception("File '" + fileName + "' not found.");
+            }
+
+            short fileSize = fileEntry.getFilesize();
+            if (fileSize == 0) {
+                return new byte[0]; // Return empty array for zero-byte file
+            }
+
+            // 2. Initialize the result array
+            byte[] fileData = new byte[fileSize];
+            int bytesReadTotal = 0;
+
+            // 3. Read Loop (Traverse FNodes)
+            short currentFNodeIndex = fileEntry.getFirstBlock();
+
+            while (currentFNodeIndex != -1) {
+                FNode currentNode = readFNode(currentFNodeIndex);
+                short dataBlockIndex = currentNode.getBlockIndex();
+
+                // Calculate disk offset for the data block
+                long dataBlockOffset = DATA_START_OFFSET + (long) dataBlockIndex * BLOCK_SIZE;
+                
+                // Determine how many bytes to read from this block
+                int bytesToRead = Math.min(BLOCK_SIZE, fileSize - bytesReadTotal);
+                
+                // Temporary buffer to hold the block data
+                byte[] blockData = new byte[bytesToRead];
+                
+                // Seek and read the data from disk
+                disk.seek(dataBlockOffset);
+                disk.readFully(blockData);
+
+                // Copy the data into the final result array
+                System.arraycopy(blockData, 0, fileData, bytesReadTotal, bytesToRead);
+                
+                bytesReadTotal += bytesToRead;
+                
+                // Move to the next FNode in the chain
+                currentFNodeIndex = currentNode.getNextBlock();
+            }
+
+            if (bytesReadTotal != fileSize) {
+                // This is a sanity check for a corrupted file chain
+                System.err.println("Warning: File size mismatch during read for '" + fileName + "'. Expected: " + fileSize + ", Read: " + bytesReadTotal);
+                // Optionally throw exception here
+            }
+
+            return fileData;
+
+        } finally {
+            globalLock.unlock();
+        }
+    }
         
     // TODO: Add deleteFile, writeFile, readFile, listFiles, and the server logic here.
     
