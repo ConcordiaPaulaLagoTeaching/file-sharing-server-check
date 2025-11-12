@@ -107,6 +107,65 @@ public class FileSystemManager {
         }
     }
 
+    public void deleteFile(String filename) throws Exception {
+        
+        globalLock.lock(); // Acquire lock for atomic operation 
+        try {
+            // 1. Find the FEntry
+            int fentryIndex = -1;
+            FEntry fileEntry = null;
+            for (int i = 0; i < MAXFILES; i++) {
+                if (fentryTable[i] != null && fentryTable[i].getFilename().equals(filename)) {
+                    fentryIndex = i;
+                    fileEntry = fentryTable[i];
+                    break;
+                }
+            }
+            if (fentryIndex == -1) {
+                throw new Exception("ERROR: file does not exist");
+            }
+
+            // 2. Traverse and Free FNodes (and their associated data blocks)
+            int currentFNodeIndex = fileEntry.getFirstBlock();
+            
+            while (currentFNodeIndex != -1) {
+                FNode currentFNode = fnodeTable[currentFNodeIndex];
+                
+                int nextFNodeIndex = currentFNode.getNext();
+                int dataBlockIndex = currentFNode.getBlockIndex();
+
+                // A. Free the associated data block (if one exists)
+                // A data block index >= 1 means the block is in use for file data.
+                if (dataBlockIndex >= FIRST_DATA_BLOCK_INDEX) {
+                    if (dataBlockIndex < MAXBLOCKS) {
+                        freeBlockList[dataBlockIndex] = false; // Mark data block as free
+                        // TODO: Optional: Write zeros to the data block on disk
+                    } else {
+                        // This indicates corruption, but we continue cleaning up metadata
+                        System.err.println("WARNING: FNode points to an invalid data block index: " + dataBlockIndex);
+                    }
+                }
+                
+                // B. Free the FNode itself (by setting blockIndex to -1)
+                currentFNode.setBlockIndex(-1); // Mark FNode as free
+                currentFNode.setNext(-1); 
+                
+                // C. Move to the next FNode in the chain
+                currentFNodeIndex = nextFNodeIndex;
+            }
+
+            // 3. Release the FEntry
+            fentryTable[fentryIndex] = null; // Mark FEntry slot as unused (available for a new file)
+
+            // TODO: Call private method to persist all three metadata structures to 'disk'
+            
+            System.out.println("SUCCESS: Deleted file '" + filename + "' from FEntry[" + fentryIndex + "]");
+
+        } finally {
+            globalLock.unlock(); // Release lock
+        }
+    }
+
 
     // TODO: Add readFile, writeFile, deleteFile, listFiles and other required methods,
 }
