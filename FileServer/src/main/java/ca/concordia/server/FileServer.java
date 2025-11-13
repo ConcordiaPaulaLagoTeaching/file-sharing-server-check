@@ -38,7 +38,7 @@ public class FileServer {
                 
                 // CRITICAL CHANGE: Implement Multithreading
                 // Delegate the entire client session to a new ClientHandler thread.
-                Thread.ofPlatform().start(new ClientHandler(clientSocket, fsManager));
+               new Thread(new ClientHandler(clientSocket, fsManager)).start();
                 
                 
             }
