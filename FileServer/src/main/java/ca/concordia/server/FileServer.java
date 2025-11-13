@@ -8,6 +8,26 @@ public class FileServer {
 
     private FileSystemManager fsManager;
     private int port;
+
+    public static void main(String[] args) {
+        // Define default parameters for the file system and server
+        int port = 8080;
+        String fileSystemName = "server_filesystem.bin";
+        // Define the total size (e.g., 10 blocks * 128 bytes/block)
+        int totalSize = 10 * 128; 
+
+        try {
+            // 1. Create the server instance
+            FileServer server = new FileServer(port, fileSystemName, totalSize);
+            
+            // 2. Start the server's listening loop
+            server.start();
+            
+        } catch (Exception e) {
+            System.err.println("Fatal error during server startup: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
     
     public FileServer(int port, String fileSystemName, int totalSize){
         try {
