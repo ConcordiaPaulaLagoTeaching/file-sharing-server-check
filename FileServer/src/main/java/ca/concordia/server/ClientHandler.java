@@ -1,113 +1,153 @@
 package ca.concordia.server;
 
 import ca.concordia.filesystem.FileSystemManager;
-import java.net.Socket;
+
 import java.io.*;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class ClientHandler implements Runnable {
 
     private final Socket clientSocket;
-    // Shared FSM instance for synchronized file operations
-    private final FileSystemManager fileSystemManager; 
+    private final FileSystemManager fsManager;
+    private final Lock readLock;
+    private final Lock writeLock;
 
-    public ClientHandler(Socket socket, FileSystemManager fsm) {
-        this.clientSocket = socket;
-        this.fileSystemManager = fsm;
+    public ClientHandler(Socket clientSocket,
+                         FileSystemManager fsManager,
+                         ReentrantReadWriteLock rwLock) {
+        this.clientSocket = clientSocket;
+        this.fsManager = fsManager;
+        this.readLock = rwLock.readLock();
+        this.writeLock = rwLock.writeLock();
     }
 
     @Override
     public void run() {
-        try (
-            BufferedReader in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-            // Autoflush writer for immediate feedback
-            PrintWriter out = new PrintWriter(clientSocket.getOutputStream(), true); 
-        ) {
-            String commandLine;
-            out.println("200 Ready. Welcome to the File Sharing Server.");
+        System.out.println("Client connected: " + clientSocket);
 
-            while ((commandLine = in.readLine()) != null) {
-                if (commandLine.trim().equalsIgnoreCase("QUIT")) {
-                    out.println("200 OK. Disconnecting.");
+        try (
+                BufferedReader in = new BufferedReader(
+                        new InputStreamReader(clientSocket.getInputStream()));
+                PrintWriter out = new PrintWriter(
+                        new BufferedWriter(
+                                new OutputStreamWriter(clientSocket.getOutputStream())), true)
+        ) {
+            String line;
+            while ((line = in.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) {
+                    continue;
+                }
+
+                if (line.equalsIgnoreCase("quit") || line.equalsIgnoreCase("exit")) {
+                    out.println("OK: bye");
                     break;
                 }
-                
-                String response = executeCommand(commandLine);
+
+                String response = handleCommand(line);
                 out.println(response);
             }
-
         } catch (IOException e) {
-            // Client disconnect/I/O error handled silently
-        } catch (Exception e) {
-            System.err.println("Unexpected error in client session: " + e.getMessage());
+            System.err.println("I/O error with client " + clientSocket + ": " + e.getMessage());
         } finally {
             try {
                 clientSocket.close();
-            } catch (IOException e) {
-                // Ignore close error
-            }
+            } catch (IOException ignored) {}
+            System.out.println("Client disconnected: " + clientSocket);
         }
     }
-    
-    // Command execution logic
-    private String executeCommand(String commandLine) {
-        
-        String[] tokens = commandLine.trim().split("\\s+", 2);
-        String command = tokens[0].toUpperCase();
-        String args = tokens.length > 1 ? tokens[1].trim() : "";
-        
+
+    private String handleCommand(String line) {
         try {
+            String[] parts = line.split(" ", 3);
+            String command = parts[0].toUpperCase();
+
             switch (command) {
-                case "CREATE":
-                    // Format: CREATE filename
-                    fileSystemManager.createFile(args);
-                    return "200 OK. File '" + args + "' created.";
+                case "CREATE": {
+                    if (parts.length < 2) return "ERROR: usage: CREATE <filename>";
+                    String filename = parts[1];
 
-                case "READ":
-                    // Format: READ filename length offset
-                    String[] readArgs = args.split("\\s+");
-                    String rFilename = readArgs[0];
-                    int rLength = Integer.parseInt(readArgs[1]);
-                    int rOffset = Integer.parseInt(readArgs[2]);
-                    
-                    byte[] readData = fileSystemManager.read(rFilename, rLength, rOffset);
-                    
-                    // Encode binary data (bytes) to Base64 (string)
-                    String dataString = java.util.Base64.getEncoder().encodeToString(readData);
-                    return "200 OK. " + readData.length + " bytes read. Data (Base64): " + dataString; 
-                    
-                case "DELETE":
-                    // Format: DELETE filename
-                    fileSystemManager.deleteFile(args);
-                    return "200 OK. File '" + args + "' deleted.";
-                    
-                case "WRITE":
-                    // Format: WRITE filename offset data(Base64)
-                    String[] writeArgs = args.split("\\s+", 3); 
-                    String wFilename = writeArgs[0];
-                    int wOffset = Integer.parseInt(writeArgs[1]);
-                    String dataBase64 = writeArgs[2];
-                    
-                    // Decode Base64 string back to binary data (bytes)
-                    byte[] writeData = java.util.Base64.getDecoder().decode(dataBase64);
-                    fileSystemManager.write(wFilename, writeData, wOffset);
-                    return "200 OK. Wrote " + writeData.length + " bytes to '" + wFilename + "'.";
+                    writeLock.lock();
+                    try {
+                        fsManager.createFile(filename);
+                    } finally {
+                        writeLock.unlock();
+                    }
+                    return "OK: file " + filename + " created";
+                }
 
-                case "LIST":
-                    // Format: LIST
-                    String[] files = fileSystemManager.listFiles();
-                    String fileList = String.join(", ", files);
-                    return "200 OK. Files: [" + (files.length > 0 ? fileList : "No files") + "]";
+                case "DELETE": {
+                    if (parts.length < 2) return "ERROR: usage: DELETE <filename>";
+                    String filename = parts[1];
+
+                    writeLock.lock();
+                    try {
+                        fsManager.deleteFile(filename);
+                    } finally {
+                        writeLock.unlock();
+                    }
+                    return "OK: file " + filename + " deleted";
+                }
+
+                case "WRITE": {
+                    if (parts.length < 3) return "ERROR: usage: WRITE <filename> <content>";
+                    String filename = parts[1];
+                    String content = parts[2];
+
+                    byte[] data = content.getBytes(StandardCharsets.UTF_8);
+
+                    writeLock.lock();
+                    try {
+                        fsManager.writeFile(filename, data);
+                    } finally {
+                        writeLock.unlock();
+                    }
+
+                    return "OK: wrote " + data.length + " bytes to " + filename;
+                }
+
+                case "READ": {
+                    if (parts.length < 2) return "ERROR: usage: READ <filename>";
+                    String filename = parts[1];
+
+                    byte[] data;
+                    readLock.lock();
+                    try {
+                        data = fsManager.readFile(filename);
+                    } finally {
+                        readLock.unlock();
+                    }
+
+                  
+                    return new String(data, StandardCharsets.UTF_8);
+                }
+
+                case "LIST": {
+                    String[] files;
+                    readLock.lock();
+                    try {
+                        files = fsManager.listFiles();
+                    } finally {
+                        readLock.unlock();
+                    }
+
+                    if (files.length == 0) {
+                        return "OK: no files";
+                    }
+                    
+                    return String.join(",", files);
+                }
 
                 default:
-                    return "400 ERROR. Unknown command: " + command;
+                    return "ERROR: unknown command";
             }
-        } catch (NumberFormatException e) {
-            return "400 ERROR. Invalid numeric argument.";
-        } catch (ArrayIndexOutOfBoundsException e) {
-             return "400 ERROR. Missing arguments for command: " + command;
         } catch (Exception e) {
-            // Catching FSM errors (e.g., file not found, no space)
-            return "500 ERROR. File System failure: " + e.getMessage();
+            
+            String msg = e.getMessage();
+            return (msg != null && !msg.isEmpty()) ? msg : "ERROR: " + e;
         }
     }
 }

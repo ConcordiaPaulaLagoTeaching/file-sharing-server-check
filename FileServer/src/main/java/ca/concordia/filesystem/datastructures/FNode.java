@@ -10,13 +10,13 @@ public class FNode {
         this.next = next;
     }
     
-    // Default constructor for an unused FNode
+    
     public FNode() {
-        this.blockIndex = -1; // Negative index means not in use [cite: 39, 40]
+        this.blockIndex = -1;
         this.next = -1;
     }
 
-    // Getters and Setters
+   
     public int getBlockIndex() {
         return blockIndex;
     }
